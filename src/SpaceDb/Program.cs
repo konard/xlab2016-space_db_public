@@ -84,7 +84,11 @@ services.AddEntityFrameworkNpgsql().AddDbContext<SpaceDbContext>(options =>
         });
 });
 
-IdentityModelEventSource.ShowPII = true;
+// Only show PII in development environment for debugging
+if (builder.Environment.IsDevelopment())
+{
+    IdentityModelEventSource.ShowPII = true;
+}
 
 services.Configure<TokenManagement>(configuration.GetSection("tokenManagement"));
 var token = configuration.GetSection("tokenManagement").Get<TokenManagement>();
@@ -92,7 +96,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(_ =>
     {
         _.Authority = token.Authority;
-        _.RequireHttpsMetadata = false;
+        // Require HTTPS metadata in production for security
+        _.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         _.SaveToken = true;
         _.TokenValidationParameters = new()
         {
@@ -123,7 +128,13 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHealthChecks($"/api/v1/health");
-// app.UseHttpsRedirection();
+
+// Enable HTTPS redirection in production for security
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseAuthorization();
 
 app.MapControllers();

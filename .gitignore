@@ -53,3 +53,29 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 /node_modules
+
+# Security - Environment and secrets files
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.*.local.json
+
+# RocksDB data directory
+rocksdb/
+*.db
+*.db-shm
+*.db-wal
+
+# SSL certificates and keys
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Redis data
+dump.rdb
+
+# IDE-specific files that might contain credentials
+.idea/**/workspace.xml
+.vs/config/applicationhost.config

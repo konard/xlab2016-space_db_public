@@ -85,7 +85,8 @@ dotnet ef database update
 
 Connection string is in `appsettings.json` or can be overridden with environment variable:
 ```bash
-$env:DB_CONNECTION_STRING="Server=localhost;Port=54321;Database=space_db;User Id=pguser;Password=pguserpass"
+# Replace YOUR_PASSWORD with your actual secure password
+$env:DB_CONNECTION_STRING="Server=localhost;Port=54321;Database=space_db;User Id=pguser;Password=YOUR_PASSWORD"
 ```
 
 ## Architecture

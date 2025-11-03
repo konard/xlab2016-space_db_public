@@ -194,9 +194,15 @@ cd src
    ./up-redis.bat       # Redis (optional)
    ```
 
-3. **Configure environment variables** (optional)
+3. **Configure environment variables**
    ```bash
-   export DB_CONNECTION_STRING="Server=localhost;Port=54321;Database=space_db;User Id=pguser;Password=pguserpass"
+   # Copy the example file and set your own secure password
+   cd src
+   cp .env.example .env
+   # Edit .env and set POSTGRES_PASSWORD to a secure value
+
+   # Or export directly (replace YOUR_PASSWORD with a secure password):
+   export DB_CONNECTION_STRING="Server=localhost;Port=54321;Database=space_db;User Id=pguser;Password=YOUR_PASSWORD"
    export ROCKSDB_PATH="./rocksdb"
    ```
 

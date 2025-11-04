@@ -57,24 +57,27 @@ namespace SpaceDb.Services
                     return null;
                 }
 
-                // Parse payload into fragments
+                // Parse payload into blocks and fragments
                 var parsedResource = await parser.ParseAsync(payload, resourceId, metadata);
 
-                if (parsedResource.Fragments.Count == 0)
+                if (parsedResource.Blocks.Count == 0)
                 {
-                    _logger.LogWarning("No fragments parsed from resource {ResourceId}", resourceId);
+                    _logger.LogWarning("No blocks parsed from resource {ResourceId}", resourceId);
                     return null;
                 }
 
-                _logger.LogInformation("Parsed {Count} fragments from resource {ResourceId}",
-                    parsedResource.Fragments.Count, resourceId);
+                var totalFragments = parsedResource.Blocks.Sum(b => b.Fragments.Count);
+
+                _logger.LogInformation("Parsed {BlockCount} blocks with {FragmentCount} total fragments from resource {ResourceId}",
+                    parsedResource.Blocks.Count, totalFragments, resourceId);
 
                 // Create resource point (dimension=0, layer=0)
                 var resourceMetadata = new Dictionary<string, object>
                 {
                     ["resource_id"] = resourceId,
                     ["resource_type"] = parsedResource.ResourceType,
-                    ["fragment_count"] = parsedResource.Fragments.Count,
+                    ["block_count"] = parsedResource.Blocks.Count,
+                    ["fragment_count"] = totalFragments,
                     ["parsed_at"] = DateTime.UtcNow
                 };
 
@@ -86,7 +89,7 @@ namespace SpaceDb.Services
                     }
                 }
 
-                var resourcePayload = $"Resource: {resourceId} ({parsedResource.ResourceType}) with {parsedResource.Fragments.Count} fragments";
+                var resourcePayload = $"Resource: {resourceId} ({parsedResource.ResourceType}) with {parsedResource.Blocks.Count} blocks and {totalFragments} fragments";
 
                 var resourcePoint = new Point
                 {
@@ -109,88 +112,150 @@ namespace SpaceDb.Services
                 _logger.LogInformation("Created resource point {PointId} for {ResourceId}",
                     resourcePointId, resourceId);
 
-                // Batch create embeddings for all fragments
-                var fragmentTexts = parsedResource.Fragments.Select(f => f.Content).ToList();
-
-                _logger.LogInformation("Creating embeddings for {Count} fragments in batch", fragmentTexts.Count);
-
-                var embeddings = await _embeddingProvider.CreateEmbeddingsAsync(
-                    _embeddingType,
-                    fragmentTexts,
-                    labels: null,
-                    returnVectors: true);
-
-                if (embeddings.Count != fragmentTexts.Count)
-                {
-                    _logger.LogError("Embedding count mismatch: expected {Expected}, got {Actual}",
-                        fragmentTexts.Count, embeddings.Count);
-                    return null;
-                }
-
-                _logger.LogInformation("Successfully created {Count} embeddings", embeddings.Count);
-
-                // Create fragment points (dimension=1, layer=0) with segments to resource
+                // Prepare result
                 var result = new ContentParseResult
                 {
                     ResourcePointId = resourcePointId.Value,
                     ParserType = parser.ContentType
                 };
 
-                for (int i = 0; i < parsedResource.Fragments.Count; i++)
+                // Process each block
+                foreach (var block in parsedResource.Blocks)
                 {
-                    var fragment = parsedResource.Fragments[i];
-                    var embedding = embeddings[i];
+                    // Step 1: Create block embedding from concatenated block content
+                    _logger.LogInformation("Creating block embedding for block {Order} with {FragmentCount} fragments",
+                        block.Order, block.Fragments.Count);
 
-                    var fragmentMetadataDict = new Dictionary<string, object>
+                    var blockEmbedding = await _embeddingProvider.CreateEmbeddingAsync(
+                        _embeddingType,
+                        block.Content,
+                        label: null,
+                        returnVectors: true);
+
+                    // Step 2: Create block point (dimension=1) with embedding
+                    var blockMetadata = new Dictionary<string, object>
                     {
                         ["resource_id"] = resourceId,
-                        ["fragment_type"] = fragment.Type,
-                        ["fragment_order"] = fragment.Order,
-                        ["parent_key"] = fragment.ParentKey ?? resourceId
+                        ["block_order"] = block.Order,
+                        ["fragment_count"] = block.Fragments.Count,
+                        ["block_size"] = block.Content.Length
                     };
 
-                    if (fragment.Metadata != null)
+                    if (block.Metadata != null)
                     {
-                        foreach (var kvp in fragment.Metadata)
+                        foreach (var kvp in block.Metadata)
                         {
-                            fragmentMetadataDict[$"fragment_{kvp.Key}"] = kvp.Value;
+                            blockMetadata[$"block_{kvp.Key}"] = kvp.Value;
                         }
                     }
 
-                    var fragmentPoint = new Point
+                    var blockPoint = new Point
                     {
                         Layer = 0,
-                        Dimension = 1,  // Fragments at dimension 1
-                        Weight = 1.0 / (fragment.Order + 1),  // Weight decreases with order
+                        Dimension = 1,  // Blocks at dimension 1
+                        Weight = 1.0 / (block.Order + 1),
                         SingularityId = singularityId,
                         UserId = userId,
-                        Payload = fragment.Content
+                        Payload = block.Content
                     };
 
-                    // Add point with embedding and create segment to resource
-                    var fragmentPointId = await _spaceDbService.AddPointAsync(
+                    // Add block point with embedding and create segment to resource
+                    var blockPointId = await _spaceDbService.AddPointAsync(
                         resourcePointId.Value,
-                        fragmentPoint,
-                        embedding);
+                        blockPoint,
+                        blockEmbedding);
 
-                    if (fragmentPointId.HasValue)
+                    if (!blockPointId.HasValue)
                     {
-                        result.FragmentPointIds.Add(fragmentPointId.Value);
-
-                        // Segment is created automatically by AddPointAsync with fromId parameter
-                        _logger.LogDebug("Created fragment point {PointId} for fragment {Order}",
-                            fragmentPointId, fragment.Order);
+                        _logger.LogWarning("Failed to create block point for block {Order}", block.Order);
+                        continue;
                     }
-                    else
+
+                    result.BlockPointIds.Add(blockPointId.Value);
+                    _logger.LogInformation("Created block point {PointId} for block {Order}",
+                        blockPointId, block.Order);
+
+                    // Step 3: Batch create embeddings for all fragments in this block
+                    var fragmentTexts = block.Fragments.Select(f => f.Content).ToList();
+
+                    _logger.LogInformation("Creating embeddings for {Count} fragments in block {BlockOrder}",
+                        fragmentTexts.Count, block.Order);
+
+                    var fragmentEmbeddings = await _embeddingProvider.CreateEmbeddingsAsync(
+                        _embeddingType,
+                        fragmentTexts,
+                        labels: null,
+                        returnVectors: true);
+
+                    if (fragmentEmbeddings.Count != fragmentTexts.Count)
                     {
-                        _logger.LogWarning("Failed to create fragment point for fragment {Order}", fragment.Order);
+                        _logger.LogError("Embedding count mismatch for block {BlockOrder}: expected {Expected}, got {Actual}",
+                            block.Order, fragmentTexts.Count, fragmentEmbeddings.Count);
+                        continue;
+                    }
+
+                    // Step 4: Create fragment points with context-dependent embeddings
+                    for (int i = 0; i < block.Fragments.Count; i++)
+                    {
+                        var fragment = block.Fragments[i];
+                        var fragmentEmbedding = fragmentEmbeddings[i];
+
+                        // Create context-dependent embedding by adding block embedding to fragment embedding
+                        var contextDependentEmbedding = CreateContextDependentEmbedding(
+                            blockEmbedding,
+                            fragmentEmbedding);
+
+                        var fragmentMetadataDict = new Dictionary<string, object>
+                        {
+                            ["resource_id"] = resourceId,
+                            ["block_order"] = block.Order,
+                            ["fragment_type"] = fragment.Type,
+                            ["fragment_order"] = fragment.Order,
+                            ["parent_key"] = fragment.ParentKey ?? resourceId
+                        };
+
+                        if (fragment.Metadata != null)
+                        {
+                            foreach (var kvp in fragment.Metadata)
+                            {
+                                fragmentMetadataDict[$"fragment_{kvp.Key}"] = kvp.Value;
+                            }
+                        }
+
+                        var fragmentPoint = new Point
+                        {
+                            Layer = 0,
+                            Dimension = 1,  // Fragments at dimension 1
+                            Weight = 1.0 / (fragment.Order + 1),
+                            SingularityId = singularityId,
+                            UserId = userId,
+                            Payload = fragment.Content
+                        };
+
+                        // Add fragment point with context-dependent embedding and create segment to block
+                        var fragmentPointId = await _spaceDbService.AddPointAsync(
+                            blockPointId.Value,
+                            fragmentPoint,
+                            contextDependentEmbedding);
+
+                        if (fragmentPointId.HasValue)
+                        {
+                            result.FragmentPointIds.Add(fragmentPointId.Value);
+                            _logger.LogDebug("Created fragment point {PointId} for fragment {Order} in block {BlockOrder}",
+                                fragmentPointId, fragment.Order, block.Order);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Failed to create fragment point for fragment {Order} in block {BlockOrder}",
+                                fragment.Order, block.Order);
+                        }
                     }
                 }
 
                 _logger.LogInformation(
-                    "Successfully stored resource {ResourceId} with {FragmentCount} fragments. " +
-                    "Resource point: {ResourcePointId}, Fragment points: {FragmentCount}",
-                    resourceId, result.TotalFragments, resourcePointId, result.FragmentPointIds.Count);
+                    "Successfully stored resource {ResourceId} with {BlockCount} blocks and {FragmentCount} fragments. " +
+                    "Resource point: {ResourcePointId}",
+                    resourceId, result.TotalBlocks, result.TotalFragments, resourcePointId);
 
                 return result;
             }
@@ -204,6 +269,56 @@ namespace SpaceDb.Services
         public IEnumerable<string> GetAvailableParserTypes()
         {
             return _parsers.Keys;
+        }
+
+        /// <summary>
+        /// Create context-dependent embedding by combining block and fragment embeddings
+        /// Uses element-wise addition to preserve both block context and fragment semantics
+        /// </summary>
+        private AIEmbedding CreateContextDependentEmbedding(AIEmbedding blockEmbedding, AIEmbedding fragmentEmbedding)
+        {
+            if (blockEmbedding.Vector == null || fragmentEmbedding.Vector == null)
+            {
+                _logger.LogWarning("Cannot create context-dependent embedding: one or both embeddings have null vectors");
+                return fragmentEmbedding;
+            }
+
+            if (blockEmbedding.Vector.Count != fragmentEmbedding.Vector.Count)
+            {
+                _logger.LogWarning("Vector dimension mismatch: block={BlockDim}, fragment={FragmentDim}. Using fragment embedding only.",
+                    blockEmbedding.Vector.Count, fragmentEmbedding.Vector.Count);
+                return fragmentEmbedding;
+            }
+
+            // Create combined embedding by element-wise addition
+            var combinedVector = new List<float>(blockEmbedding.Vector.Count);
+            for (int i = 0; i < blockEmbedding.Vector.Count; i++)
+            {
+                combinedVector.Add(blockEmbedding.Vector[i] + fragmentEmbedding.Vector[i]);
+            }
+
+            // Normalize the combined vector to maintain similar magnitude
+            var magnitude = 0.0f;
+            for (int i = 0; i < combinedVector.Count; i++)
+            {
+                magnitude += combinedVector[i] * combinedVector[i];
+            }
+            magnitude = (float)Math.Sqrt(magnitude);
+
+            if (magnitude > 0)
+            {
+                for (int i = 0; i < combinedVector.Count; i++)
+                {
+                    combinedVector[i] /= magnitude;
+                }
+            }
+
+            return new AIEmbedding
+            {
+                Id = fragmentEmbedding.Id,
+                Label = fragmentEmbedding.Label,
+                Vector = combinedVector
+            };
         }
 
         private PayloadParserBase? GetParser(string payload, string contentType)

@@ -16,7 +16,8 @@ namespace SpaceDb.Services.Parsers
         public JsonPayloadParser(
             ILogger<JsonPayloadParser> logger,
             int maxDepth = 10,
-            bool includeArrays = true) : base(logger)
+            bool includeArrays = true,
+            int maxBlockSize = 8000) : base(logger, maxBlockSize)
         {
             _maxDepth = maxDepth;
             _includeArrays = includeArrays;
@@ -51,12 +52,15 @@ namespace SpaceDb.Services.Parsers
                     depth: 0,
                     parentKey: null);
 
-                result.Fragments = fragments;
+                // Now group fragments into blocks
+                result.Blocks = CreateBlocksFromFragments(fragments);
+
                 result.Metadata["total_fragments"] = fragments.Count;
+                result.Metadata["total_blocks"] = result.Blocks.Count;
                 result.Metadata["json_size"] = payload.Length;
 
-                _logger.LogInformation("Parsed {Count} JSON nodes from resource {ResourceId}",
-                    fragments.Count, resourceId);
+                _logger.LogInformation("Parsed {FragmentCount} JSON nodes into {BlockCount} blocks from resource {ResourceId}",
+                    fragments.Count, result.Blocks.Count, resourceId);
             }
             catch (JsonException ex)
             {

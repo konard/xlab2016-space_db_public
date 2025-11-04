@@ -16,7 +16,8 @@ namespace SpaceDb.Services.Parsers
         public TextPayloadParser(
             ILogger<TextPayloadParser> logger,
             int minParagraphLength = 50,
-            int maxParagraphLength = 2000) : base(logger)
+            int maxParagraphLength = 2000,
+            int maxBlockSize = 8000) : base(logger, maxBlockSize)
         {
             _minParagraphLength = minParagraphLength;
             _maxParagraphLength = maxParagraphLength;
@@ -35,6 +36,9 @@ namespace SpaceDb.Services.Parsers
                 ResourceType = ContentType,
                 Metadata = CreateMetadata(metadata)
             };
+
+            // First, create fragments as before
+            var fragments = new List<ContentFragment>();
 
             // Split by double newlines (paragraph separator)
             var rawParagraphs = Regex.Split(payload, @"\n\s*\n|\r\n\s*\r\n")
@@ -63,12 +67,12 @@ namespace SpaceDb.Services.Parsers
                             var chunks = await SplitLongParagraphAsync(bufferedContent);
                             foreach (var chunk in chunks)
                             {
-                                result.Fragments.Add(CreateFragment(chunk, order++));
+                                fragments.Add(CreateFragment(chunk, order++));
                             }
                         }
                         else
                         {
-                            result.Fragments.Add(CreateFragment(bufferedContent, order++));
+                            fragments.Add(CreateFragment(bufferedContent, order++));
                         }
                         paragraphBuffer.Clear();
                     }
@@ -79,7 +83,7 @@ namespace SpaceDb.Services.Parsers
                 if (paragraphBuffer.Count > 0)
                 {
                     var bufferedContent = string.Join("\n\n", paragraphBuffer);
-                    result.Fragments.Add(CreateFragment(bufferedContent, order++));
+                    fragments.Add(CreateFragment(bufferedContent, order++));
                     paragraphBuffer.Clear();
                 }
 
@@ -89,12 +93,12 @@ namespace SpaceDb.Services.Parsers
                     var chunks = await SplitLongParagraphAsync(paragraph);
                     foreach (var chunk in chunks)
                     {
-                        result.Fragments.Add(CreateFragment(chunk, order++));
+                        fragments.Add(CreateFragment(chunk, order++));
                     }
                 }
                 else
                 {
-                    result.Fragments.Add(CreateFragment(paragraph, order++));
+                    fragments.Add(CreateFragment(paragraph, order++));
                 }
             }
 
@@ -102,15 +106,19 @@ namespace SpaceDb.Services.Parsers
             if (paragraphBuffer.Count > 0)
             {
                 var bufferedContent = string.Join("\n\n", paragraphBuffer);
-                result.Fragments.Add(CreateFragment(bufferedContent, order++));
+                fragments.Add(CreateFragment(bufferedContent, order++));
                 _logger.LogDebug("Flushed final buffer with {Count} short paragraphs", paragraphBuffer.Count);
             }
 
-            result.Metadata["total_fragments"] = result.Fragments.Count;
+            // Now group fragments into blocks
+            result.Blocks = CreateBlocksFromFragments(fragments);
+
+            result.Metadata["total_fragments"] = fragments.Count;
+            result.Metadata["total_blocks"] = result.Blocks.Count;
             result.Metadata["total_length"] = payload.Length;
 
-            _logger.LogInformation("Parsed {Count} fragments from resource {ResourceId}",
-                result.Fragments.Count, resourceId);
+            _logger.LogInformation("Parsed {FragmentCount} fragments into {BlockCount} blocks from resource {ResourceId}",
+                fragments.Count, result.Blocks.Count, resourceId);
 
             return await Task.FromResult(result);
         }

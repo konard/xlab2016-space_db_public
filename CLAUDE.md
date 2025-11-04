@@ -378,3 +378,13 @@ redisDictionary.SaveCorrelation(key1, key2);
 var value = redisDictionary.Get(key);
 var correlated = redisDictionary.GetCorrelation(key);
 ```
+
+---
+
+Issue to solve: https://github.com/xlab2016/space_db_public/issues/3
+Your prepared branch: issue-3-bae457eef795
+Your prepared working directory: /tmp/gh-issue-solver-1762218652575
+Your forked repository: konard/space_db_public
+Original repository (upstream): xlab2016/space_db_public
+
+Proceed.

@@ -43,10 +43,11 @@ namespace SpaceDb.Tests.Services.Parsers
             result.Should().NotBeNull();
             result.ResourceId.Should().Be(resourceId);
             result.ResourceType.Should().Be("text");
-            result.Fragments.Should().HaveCount(1);
-            result.Fragments[0].Content.Should().Contain("normal paragraph");
-            result.Fragments[0].Type.Should().Be("paragraph");
-            result.Fragments[0].Order.Should().Be(0);
+            result.Blocks.Should().HaveCount(1);
+            result.Blocks[0].Fragments.Should().HaveCount(1);
+            result.Blocks[0].Fragments[0].Content.Should().Contain("normal paragraph");
+            result.Blocks[0].Fragments[0].Type.Should().Be("paragraph");
+            result.Blocks[0].Fragments[0].Order.Should().Be(0);
         }
 
         [Fact]
@@ -64,13 +65,14 @@ Third paragraph continuing the pattern of adequate length.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(3);
-            result.Fragments[0].Content.Should().Contain("First paragraph");
-            result.Fragments[1].Content.Should().Contain("Second paragraph");
-            result.Fragments[2].Content.Should().Contain("Third paragraph");
-            result.Fragments[0].Order.Should().Be(0);
-            result.Fragments[1].Order.Should().Be(1);
-            result.Fragments[2].Order.Should().Be(2);
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(3);
+            allFragments[0].Content.Should().Contain("First paragraph");
+            allFragments[1].Content.Should().Contain("Second paragraph");
+            allFragments[2].Content.Should().Contain("Third paragraph");
+            allFragments[0].Order.Should().Be(0);
+            allFragments[1].Order.Should().Be(1);
+            allFragments[2].Order.Should().Be(2);
         }
 
         #endregion
@@ -88,8 +90,9 @@ Third paragraph continuing the pattern of adequate length.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(1);
-            result.Fragments[0].Content.Should().Be("Short text.");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(1);
+            allFragments[0].Content.Should().Be("Short text.");
         }
 
         [Fact]
@@ -107,10 +110,11 @@ Short three.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(1);
-            result.Fragments[0].Content.Should().Contain("Short one.");
-            result.Fragments[0].Content.Should().Contain("Short two.");
-            result.Fragments[0].Content.Should().Contain("Short three.");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(1);
+            allFragments[0].Content.Should().Contain("Short one.");
+            allFragments[0].Content.Should().Contain("Short two.");
+            allFragments[0].Content.Should().Contain("Short three.");
         }
 
         [Fact]
@@ -126,9 +130,10 @@ This is a long paragraph with enough content to meet the minimum length requirem
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(2);
-            result.Fragments[0].Content.Should().Be("Short.");
-            result.Fragments[1].Content.Should().Contain("long paragraph");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(2);
+            allFragments[0].Content.Should().Be("Short.");
+            allFragments[1].Content.Should().Contain("long paragraph");
         }
 
         [Fact]
@@ -144,9 +149,10 @@ Short end.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(2);
-            result.Fragments[0].Content.Should().Contain("long paragraph");
-            result.Fragments[1].Content.Should().Be("Short end.");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(2);
+            allFragments[0].Content.Should().Contain("long paragraph");
+            allFragments[1].Content.Should().Be("Short end.");
         }
 
         [Fact]
@@ -170,9 +176,10 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCountGreaterThan(0);
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCountGreaterThan(0);
             // All content should be preserved
-            var allContent = string.Join(" ", result.Fragments.Select(f => f.Content));
+            var allContent = string.Join(" ", allFragments.Select(f => f.Content));
             allContent.Should().Contain("Short 1");
             allContent.Should().Contain("Short 2");
             allContent.Should().Contain("Short 3");
@@ -197,8 +204,9 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCountGreaterThan(1);
-            foreach (var fragment in result.Fragments)
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCountGreaterThan(1);
+            foreach (var fragment in allFragments)
             {
                 fragment.Content.Length.Should().BeLessThanOrEqualTo(2000);
             }
@@ -216,9 +224,10 @@ Short 4.";
             var result = await parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCountGreaterThan(1);
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCountGreaterThan(1);
             // Allow small margin for sentence boundary joins (spaces between sentences)
-            foreach (var fragment in result.Fragments)
+            foreach (var fragment in allFragments)
             {
                 fragment.Content.Length.Should().BeLessThanOrEqualTo(110);
             }
@@ -238,9 +247,10 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCountGreaterThan(1);
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCountGreaterThan(1);
             // Each fragment should end at a sentence boundary (period + space)
-            foreach (var fragment in result.Fragments.Take(result.Fragments.Count - 1))
+            foreach (var fragment in allFragments.Take(allFragments.Count - 1))
             {
                 fragment.Content.Should().Contain(".");
             }
@@ -261,7 +271,7 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().BeEmpty();
+            result.Blocks.Should().BeEmpty();
         }
 
         [Fact]
@@ -275,7 +285,7 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().BeEmpty();
+            result.Blocks.Should().BeEmpty();
         }
 
         [Fact]
@@ -289,9 +299,10 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(1);
-            result.Fragments[0].Content.Should().NotContain("    ");
-            result.Fragments[0].Content.Should().Contain("excessive whitespace in the middle");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(1);
+            allFragments[0].Content.Should().NotContain("    ");
+            allFragments[0].Content.Should().Contain("excessive whitespace in the middle");
         }
 
         [Fact]
@@ -305,7 +316,8 @@ Short 4.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(3);
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(3);
         }
 
         [Fact]
@@ -327,8 +339,9 @@ E";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(1);
-            var content = result.Fragments[0].Content;
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(1);
+            var content = allFragments[0].Content;
             content.Should().Contain("A");
             content.Should().Contain("B");
             content.Should().Contain("C");
@@ -351,7 +364,8 @@ E";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            var fragment = result.Fragments[0];
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            var fragment = allFragments[0];
             fragment.Metadata.Should().ContainKey("length");
             fragment.Metadata.Should().ContainKey("word_count");
             fragment.Metadata["length"].Should().Be(fragment.Content.Length);
@@ -394,7 +408,8 @@ E";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            var fragment = result.Fragments[0];
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            var fragment = allFragments[0];
             fragment.Metadata["word_count"].Should().Be(12);
         }
 
@@ -418,9 +433,10 @@ This paragraph is longer than twenty characters.";
             var result = await parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().NotBeEmpty();
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().NotBeEmpty();
             // Short paragraphs should be merged
-            var allContent = string.Join(" ", result.Fragments.Select(f => f.Content));
+            var allContent = string.Join(" ", allFragments.Select(f => f.Content));
             allContent.Should().Contain("Short 10 chars");
         }
 
@@ -497,15 +513,16 @@ Paragraph Delta with sufficient content for processing.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCount(4);
-            result.Fragments[0].Content.Should().Contain("Alpha");
-            result.Fragments[1].Content.Should().Contain("Beta");
-            result.Fragments[2].Content.Should().Contain("Gamma");
-            result.Fragments[3].Content.Should().Contain("Delta");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCount(4);
+            allFragments[0].Content.Should().Contain("Alpha");
+            allFragments[1].Content.Should().Contain("Beta");
+            allFragments[2].Content.Should().Contain("Gamma");
+            allFragments[3].Content.Should().Contain("Delta");
 
-            for (int i = 0; i < result.Fragments.Count; i++)
+            for (int i = 0; i < allFragments.Count; i++)
             {
-                result.Fragments[i].Order.Should().Be(i);
+                allFragments[i].Order.Should().Be(i);
             }
         }
 
@@ -523,14 +540,15 @@ Paragraph Delta with sufficient content for processing.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            result.Fragments.Should().HaveCountGreaterThan(2);
-            result.Fragments[0].Content.Should().Contain("First normal");
-            result.Fragments[^1].Content.Should().Contain("Last normal");
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            allFragments.Should().HaveCountGreaterThan(2);
+            allFragments[0].Content.Should().Contain("First normal");
+            allFragments[^1].Content.Should().Contain("Last normal");
 
             // Orders should be sequential
-            for (int i = 0; i < result.Fragments.Count; i++)
+            for (int i = 0; i < allFragments.Count; i++)
             {
-                result.Fragments[i].Order.Should().Be(i);
+                allFragments[i].Order.Should().Be(i);
             }
         }
 
@@ -560,7 +578,8 @@ Paragraph Delta with sufficient content for processing.";
             var result = await _parser.ParseAsync(payload, resourceId);
 
             // Assert
-            var allFragmentContent = string.Join(" ", result.Fragments.Select(f => f.Content));
+            var allFragments = result.Blocks.SelectMany(b => b.Fragments).ToList();
+            var allFragmentContent = string.Join(" ", allFragments.Select(f => f.Content));
 
             // Every paragraph should appear in the results
             allFragmentContent.Should().Contain("A");

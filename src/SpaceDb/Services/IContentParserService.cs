@@ -42,12 +42,17 @@ namespace SpaceDb.Services
         public long ResourcePointId { get; set; }
 
         /// <summary>
-        /// Fragment point IDs (dimension=1)
+        /// Block point IDs (dimension=1, intermediate level)
+        /// </summary>
+        public List<long> BlockPointIds { get; set; } = new();
+
+        /// <summary>
+        /// Fragment point IDs (dimension=1, leaf level)
         /// </summary>
         public List<long> FragmentPointIds { get; set; } = new();
 
         /// <summary>
-        /// Segment IDs connecting resource to fragments
+        /// Segment IDs connecting resource to blocks and blocks to fragments
         /// </summary>
         public List<long> SegmentIds { get; set; } = new();
 
@@ -55,6 +60,11 @@ namespace SpaceDb.Services
         /// Parser type used
         /// </summary>
         public string ParserType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Total blocks created
+        /// </summary>
+        public int TotalBlocks => BlockPointIds.Count;
 
         /// <summary>
         /// Total fragments created

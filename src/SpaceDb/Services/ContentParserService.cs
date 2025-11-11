@@ -14,6 +14,7 @@ namespace SpaceDb.Services
         private readonly ISpaceDbService _spaceDbService;
         private readonly IEmbeddingProvider _embeddingProvider;
         private readonly ILogger<ContentParserService> _logger;
+        private readonly IWorkflowLogService? _workflowLogService;
         private readonly Dictionary<string, PayloadParserBase> _parsers;
         private readonly string _embeddingType;
 
@@ -22,11 +23,13 @@ namespace SpaceDb.Services
             IEmbeddingProvider embeddingProvider,
             ILogger<ContentParserService> logger,
             IEnumerable<PayloadParserBase> parsers,
-            string embeddingType = "default")
+            string embeddingType = "default",
+            IWorkflowLogService? workflowLogService = null)
         {
             _spaceDbService = spaceDbService ?? throw new ArgumentNullException(nameof(spaceDbService));
             _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _workflowLogService = workflowLogService;
             _embeddingType = embeddingType;
 
             // Register parsers by content type
@@ -44,8 +47,18 @@ namespace SpaceDb.Services
             int? userId = null,
             Dictionary<string, object>? metadata = null)
         {
+            long? workflowId = null;
+
             try
             {
+                // Start workflow logging
+                if (_workflowLogService != null)
+                {
+                    workflowId = await _workflowLogService.StartWorkflowAsync(
+                        "ContentParsing",
+                        $"Parsing content for resource '{resourceId}' (type: {contentType}, size: {payload.Length} chars)");
+                }
+
                 _logger.LogInformation("Parsing and storing content for resource {ResourceId}, type: {ContentType}",
                     resourceId, contentType);
 
@@ -54,7 +67,20 @@ namespace SpaceDb.Services
                 if (parser == null)
                 {
                     _logger.LogError("No suitable parser found for content type: {ContentType}", contentType);
+                    if (workflowId.HasValue && _workflowLogService != null)
+                    {
+                        await _workflowLogService.FailWorkflowAsync(
+                            workflowId.Value,
+                            $"No suitable parser found for content type: {contentType}");
+                    }
                     return null;
+                }
+
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.LogInfoAsync(
+                        workflowId.Value,
+                        $"Using parser: {parser.ContentType}");
                 }
 
                 // Parse payload into blocks and fragments
@@ -63,6 +89,12 @@ namespace SpaceDb.Services
                 if (parsedResource.Blocks.Count == 0)
                 {
                     _logger.LogWarning("No blocks parsed from resource {ResourceId}", resourceId);
+                    if (workflowId.HasValue && _workflowLogService != null)
+                    {
+                        await _workflowLogService.LogWarningAsync(
+                            workflowId.Value,
+                            $"No blocks parsed from resource '{resourceId}'");
+                    }
                     return null;
                 }
 
@@ -70,6 +102,13 @@ namespace SpaceDb.Services
 
                 _logger.LogInformation("Parsed {BlockCount} blocks with {FragmentCount} total fragments from resource {ResourceId}",
                     parsedResource.Blocks.Count, totalFragments, resourceId);
+
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.LogInfoAsync(
+                        workflowId.Value,
+                        $"Parsed {parsedResource.Blocks.Count} blocks with {totalFragments} total fragments");
+                }
 
                 // Create resource point (dimension=0, layer=0)
                 var resourceMetadata = new Dictionary<string, object>
@@ -101,16 +140,36 @@ namespace SpaceDb.Services
                     Payload = resourcePayload
                 };
 
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.LogInfoAsync(
+                        workflowId.Value,
+                        "Creating resource point (dimension=0)");
+                }
+
                 var resourcePointId = await _spaceDbService.AddPointAsync(null, resourcePoint);
 
                 if (!resourcePointId.HasValue)
                 {
                     _logger.LogError("Failed to create resource point for {ResourceId}", resourceId);
+                    if (workflowId.HasValue && _workflowLogService != null)
+                    {
+                        await _workflowLogService.FailWorkflowAsync(
+                            workflowId.Value,
+                            $"Failed to create resource point for '{resourceId}'");
+                    }
                     return null;
                 }
 
                 _logger.LogInformation("Created resource point {PointId} for {ResourceId}",
                     resourcePointId, resourceId);
+
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.LogInfoAsync(
+                        workflowId.Value,
+                        $"Created resource point {resourcePointId.Value}");
+                }
 
                 // Prepare result
                 var result = new ContentParseResult
@@ -120,11 +179,25 @@ namespace SpaceDb.Services
                 };
 
                 // Process each block
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.LogInfoAsync(
+                        workflowId.Value,
+                        $"Processing {parsedResource.Blocks.Count} blocks with embeddings");
+                }
+
                 foreach (var block in parsedResource.Blocks)
                 {
                     // Step 1: Create block embedding from concatenated block content
                     _logger.LogInformation("Creating block embedding for block {Order} with {FragmentCount} fragments",
                         block.Order, block.Fragments.Count);
+
+                    if (workflowId.HasValue && _workflowLogService != null)
+                    {
+                        await _workflowLogService.LogInfoAsync(
+                            workflowId.Value,
+                            $"Processing block {block.Order + 1}/{parsedResource.Blocks.Count} ({block.Fragments.Count} fragments)");
+                    }
 
                     var blockEmbedding = await _embeddingProvider.CreateEmbeddingAsync(
                         _embeddingType,
@@ -257,11 +330,27 @@ namespace SpaceDb.Services
                     "Resource point: {ResourcePointId}",
                     resourceId, result.TotalBlocks, result.TotalFragments, resourcePointId);
 
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.CompleteWorkflowAsync(
+                        workflowId.Value,
+                        $"Successfully created {result.TotalBlocks} blocks and {result.TotalFragments} fragments for resource '{resourceId}' (ResourcePointId: {resourcePointId})");
+                }
+
                 return result;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error parsing and storing content for resource {ResourceId}", resourceId);
+
+                if (workflowId.HasValue && _workflowLogService != null)
+                {
+                    await _workflowLogService.FailWorkflowAsync(
+                        workflowId.Value,
+                        $"Error parsing content for resource '{resourceId}'",
+                        ex);
+                }
+
                 return null;
             }
         }

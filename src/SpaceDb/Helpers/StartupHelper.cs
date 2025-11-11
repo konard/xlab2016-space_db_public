@@ -85,6 +85,9 @@ namespace SpaceDb.Helpers
             // SpaceDb Service
             services.AddScoped<ISpaceDbService, SpaceDbService>();
 
+            // Workflow Log Service
+            services.AddScoped<IWorkflowLogService, WorkflowLogService>();
+
             // Content Parsers
             services.AddSingleton<PayloadParserBase, TextPayloadParser>(provider =>
             {
@@ -106,13 +109,15 @@ namespace SpaceDb.Helpers
                 var logger = provider.GetRequiredService<ILogger<ContentParserService>>();
                 var parsers = provider.GetServices<PayloadParserBase>();
                 var config = provider.GetRequiredService<IOptions<QdrantConfig>>().Value;
+                var workflowLogService = provider.GetRequiredService<IWorkflowLogService>();
 
                 return new ContentParserService(
                     spaceDbService,
                     embeddingProvider,
                     logger,
                     parsers,
-                    config.EmbeddingType);
+                    config.EmbeddingType,
+                    workflowLogService);
             });
         }
 

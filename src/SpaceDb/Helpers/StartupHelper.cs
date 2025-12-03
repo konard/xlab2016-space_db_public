@@ -101,6 +101,12 @@ namespace SpaceDb.Helpers
                 return new JsonPayloadParser(logger, maxDepth: 10, includeArrays: true);
             });
 
+            services.AddSingleton<PayloadParserBase, OwlPayloadParser>(provider =>
+            {
+                var logger = provider.GetRequiredService<ILogger<OwlPayloadParser>>();
+                return new OwlPayloadParser(logger, maxDepth: 10, includeAnnotations: true);
+            });
+
             // Content Parser Service
             services.AddScoped<IContentParserService>(provider =>
             {

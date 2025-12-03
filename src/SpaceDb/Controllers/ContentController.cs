@@ -100,6 +100,64 @@ public class ContentController : ControllerBase
     }
 
     /// <summary>
+    /// Upload OpenCyc OWL/RDF ontology
+    /// </summary>
+    /// <remarks>
+    /// Specialized endpoint for OpenCyc OWL/RDF format.
+    /// Parses ontology into resource with fragments for:
+    /// - Ontology header
+    /// - Classes (with subClassOf, sameAs relationships)
+    /// - Properties (ObjectProperty, DatatypeProperty, etc.)
+    /// - Individuals (NamedIndividual instances)
+    /// </remarks>
+    [HttpPost("opencyc/owl")]
+    [ProducesResponseType(typeof(ApiResponse<ContentParseResult>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> UploadOpenCycOwl([FromBody] UploadOwlRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Payload))
+            {
+                return BadRequest(new ApiResponse<ContentParseResult>(null, "OWL/RDF payload is required"));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.ResourceId))
+            {
+                return BadRequest(new ApiResponse<ContentParseResult>(null, "ResourceId is required"));
+            }
+
+            _logger.LogInformation("Uploading OpenCyc OWL/RDF for resource {ResourceId}", request.ResourceId);
+
+            // Force content type to "owl"
+            var result = await _contentParserService.ParseAndStoreAsync(
+                payload: request.Payload,
+                resourceId: request.ResourceId,
+                contentType: "owl",
+                singularityId: request.SingularityId,
+                userId: request.UserId,
+                metadata: request.Metadata);
+
+            if (result == null)
+            {
+                return BadRequest(new ApiResponse<ContentParseResult>(
+                    null,
+                    "Failed to parse and store OWL/RDF content"));
+            }
+
+            return Ok(new ApiResponse<ContentParseResult>(
+                result,
+                $"Successfully created resource {result.ResourcePointId} with {result.TotalFragments} OWL fragments"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading OpenCyc OWL for resource {ResourceId}", request.ResourceId);
+            return StatusCode(500, new ApiResponse<ContentParseResult>(
+                null,
+                "Internal server error"));
+        }
+    }
+
+    /// <summary>
     /// Upload multiple content items in batch
     /// </summary>
     [HttpPost("upload/batch")]
@@ -216,4 +274,35 @@ public class BatchUploadContentRequest
     /// Default user ID for all items (can be overridden per item)
     /// </summary>
     public int? UserId { get; set; }
+}
+
+/// <summary>
+/// Request for uploading OpenCyc OWL/RDF content
+/// </summary>
+public class UploadOwlRequest
+{
+    /// <summary>
+    /// OWL/RDF XML payload
+    /// </summary>
+    public string Payload { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Resource identifier (filename, URL, etc.)
+    /// </summary>
+    public string ResourceId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Singularity namespace
+    /// </summary>
+    public long? SingularityId { get; set; }
+
+    /// <summary>
+    /// User ID
+    /// </summary>
+    public int? UserId { get; set; }
+
+    /// <summary>
+    /// Additional metadata
+    /// </summary>
+    public Dictionary<string, object>? Metadata { get; set; }
 }

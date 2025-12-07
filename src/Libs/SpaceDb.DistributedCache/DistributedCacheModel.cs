@@ -57,57 +57,7 @@ public class DistributedCacheModel
             // Value expired
             if (asyncGet)
             {
-                // Return stale value while refreshing in background
-                if (!entry.IsRefreshing)
-                {
-                    // Start background refresh
-                    var lockObj = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
-
-                    // Try to acquire lock without blocking
-                    if (lockObj.Wait(0))
-                    {
-                        try
-                        {
-                            // Double-check after acquiring lock
-                            if (!entry.IsRefreshing)
-                            {
-                                entry.IsRefreshing = true;
-
-                                // Start background refresh task
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        var newValue = await getAsync;
-
-                                        // Update cache entry
-                                        if (_cache.TryGetValue(key, out var currentEntry))
-                                        {
-                                            currentEntry.Value = newValue;
-                                            currentEntry.ExpiresAt = DateTime.UtcNow.Add(liveTime);
-                                            currentEntry.IsRefreshing = false;
-                                        }
-                                    }
-                                    catch
-                                    {
-                                        // On error, mark as not refreshing so retry can happen
-                                        if (_cache.TryGetValue(key, out var currentEntry))
-                                        {
-                                            currentEntry.IsRefreshing = false;
-                                        }
-                                    }
-                                });
-                            }
-                        }
-                        finally
-                        {
-                            lockObj.Release();
-                        }
-                    }
-                }
-
-                // Return stale value
-                return (T)entry.Value!;
+                return HandleAsyncGet(key, entry, getAsync, liveTime);
             }
         }
 
@@ -164,6 +114,60 @@ public class DistributedCacheModel
         }
 
         return Task.FromResult(default(T));
+    }
+
+    /// <summary>
+    /// Handles async get scenario: returns stale value while refreshing in background.
+    /// </summary>
+    private T HandleAsyncGet<T>(string key, CacheEntry entry, Task<T> getAsync, TimeSpan liveTime)
+    {
+        // Try to start background refresh if not already refreshing
+        if (!entry.IsRefreshing && (entry.RefreshTask == null || entry.RefreshTask.IsCompleted))
+        {
+            var lockObj = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+            if (lockObj.Wait(0))
+            {
+                try
+                {
+                    // Double-check after acquiring lock
+                    if (!entry.IsRefreshing && (entry.RefreshTask == null || entry.RefreshTask.IsCompleted))
+                    {
+                        entry.IsRefreshing = true;
+                        entry.RefreshTask = StartBackgroundRefresh(key, getAsync, liveTime);
+                    }
+                }
+                finally
+                {
+                    lockObj.Release();
+                }
+            }
+        }
+
+        return (T)entry.Value!;
+    }
+
+    private async Task StartBackgroundRefresh<T>(string key, Task<T> getAsync, TimeSpan liveTime)
+    {
+        try
+        {
+            var newValue = await getAsync.ConfigureAwait(false);
+            if (_cache.TryGetValue(key, out var currentEntry))
+            {
+                currentEntry.Value = newValue;
+                currentEntry.ExpiresAt = DateTime.UtcNow.Add(liveTime);
+            }
+        }
+        catch
+        {
+            // On error, mark as not refreshing so retry can happen
+        }
+        finally
+        {
+            if (_cache.TryGetValue(key, out var currentEntry))
+            {
+                currentEntry.IsRefreshing = false;
+            }
+        }
     }
 
     /// <summary>

@@ -659,7 +659,6 @@ public class DistributedCacheModelPerformanceTests : IDisposable
 
         var readCount = 0L;
         var writeCount = 0L;
-        var endTime = DateTime.UtcNow.AddSeconds(testDurationSeconds);
         var numReaderThreads = Environment.ProcessorCount * 2;
         var numWriterThreads = Math.Max(2, Environment.ProcessorCount / 2);
         var readRpsSnapshots = new List<double>();
@@ -676,7 +675,7 @@ public class DistributedCacheModelPerformanceTests : IDisposable
             var lastWriteCount = 0L;
             var lastTime = stopwatch.Elapsed.TotalSeconds;
 
-            while (DateTime.UtcNow < endTime)
+            while (stopwatch.Elapsed.TotalSeconds < testDurationSeconds)
             {
                 await Task.Delay(samplingIntervalMs);
 
@@ -697,30 +696,14 @@ public class DistributedCacheModelPerformanceTests : IDisposable
             }
         }));
 
-        // Reader tasks
-        for (int t = 0; t < numReaderThreads; t++)
-        {
-            var threadId = t;
-            tasks.Add(Task.Run(async () =>
-            {
-                var random = new Random(threadId);
-                while (DateTime.UtcNow < endTime)
-                {
-                    var keyIndex = random.Next(numberOfKeys);
-                    await _cache.Get<int>($"{keyPrefix}{keyIndex}");
-                    Interlocked.Increment(ref readCount);
-                }
-            }));
-        }
-
-        // Writer tasks
+        // Writer tasks (start before readers to avoid thread starvation)
         for (int t = 0; t < numWriterThreads; t++)
         {
             var threadId = t + 1000;
             tasks.Add(Task.Run(async () =>
             {
                 var random = new Random(threadId);
-                while (DateTime.UtcNow < endTime)
+                while (stopwatch.Elapsed.TotalSeconds < testDurationSeconds)
                 {
                     var keyIndex = random.Next(numberOfKeys);
                     var newValue = random.Next(100000);
@@ -728,8 +711,25 @@ public class DistributedCacheModelPerformanceTests : IDisposable
                         Task.FromResult(newValue), asyncGet: false);
                     Interlocked.Increment(ref writeCount);
 
-                    // Small delay for realistic write pattern
-                    await Task.Delay(1);
+                    // Small spin to prevent writer threads from monopolizing CPU
+                    // while still allowing enough writes to meet the 500 RPS target
+                    Thread.SpinWait(100);
+                }
+            }));
+        }
+
+        // Reader tasks (start after writers to give them priority)
+        for (int t = 0; t < numReaderThreads; t++)
+        {
+            var threadId = t;
+            tasks.Add(Task.Run(async () =>
+            {
+                var random = new Random(threadId);
+                while (stopwatch.Elapsed.TotalSeconds < testDurationSeconds)
+                {
+                    var keyIndex = random.Next(numberOfKeys);
+                    await _cache.Get<int>($"{keyPrefix}{keyIndex}");
+                    Interlocked.Increment(ref readCount);
                 }
             }));
         }
